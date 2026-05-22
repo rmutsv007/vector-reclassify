@@ -1,0 +1,4 @@
+def classFactory(iface):
+    from .vector_reclassify_plugin import VectorReclassifyPlugin
+
+    return VectorReclassifyPlugin(iface)

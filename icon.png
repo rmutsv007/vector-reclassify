@@ -1,0 +1,19 @@
+# Changelog
+
+## 0.1.2
+
+- Added a dedicated top toolbar for the plugin action in QGIS
+
+## 0.1.1
+
+- Added repository-ready PNG icon and updated plugin metadata
+- Added drag-and-drop rule editing that preserves rules when switching modes
+- Added LICENSE to support publishing in the QGIS Plugins Directory
+
+## 0.1.0
+
+- Initial QGIS plugin release
+- Exact-match vector attribute reclassification into a new field
+- Temporary output enabled by default
+- Export support for GeoPackage, Shapefile, and GeoJSON
+- Packaging script and plugin icon added for distribution
