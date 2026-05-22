@@ -33,8 +33,8 @@ class ReclassifyConfig:
 def reclassify_vector_layer(config: ReclassifyConfig) -> tuple[QgsVectorLayer, int]:
     layer = QgsProject.instance().mapLayer(config.layer_id)
     if (
-        not isinstance(layer, QgsVectorLayer)
-        or layer.type() != QgsMapLayerType.VectorLayer
+        not isinstance(layer, QgsVectorLayer) or
+        layer.type() != QgsMapLayerType.VectorLayer
     ):
         raise ValueError("Selected layer is not a valid vector layer.")
 

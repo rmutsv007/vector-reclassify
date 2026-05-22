@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Adjusted multiline boolean conditions to resolve Flake8 W503 informational findings
+
 ## 0.1.4
 
 - Added trailing newlines to Python files to resolve Flake8 W292 informational findings

@@ -192,8 +192,8 @@ class VectorReclassifyDialog(QDialog):
         vector_layers = []
         for layer in QgsProject.instance().mapLayers().values():
             if (
-                isinstance(layer, QgsVectorLayer)
-                and layer.type() == QgsMapLayerType.VectorLayer
+                isinstance(layer, QgsVectorLayer) and
+                layer.type() == QgsMapLayerType.VectorLayer
             ):
                 vector_layers.append(layer)
 
@@ -375,8 +375,8 @@ class VectorReclassifyDialog(QDialog):
         unassigned_item = self._unassigned_group_item()
         if item_kind == ITEM_KIND_SOURCE:
             if (
-                current_item.parent() is not None
-                and current_item.parent() != unassigned_item
+                current_item.parent() is not None and
+                current_item.parent() != unassigned_item
             ):
                 current_item.parent().removeChild(current_item)
                 unassigned_item.addChild(current_item)
@@ -515,8 +515,8 @@ class VectorReclassifyDialog(QDialog):
                 if current_group and current_group != UNASSIGNED_GROUP_LABEL:
                     group_name = current_group
                 if (
-                    group_name != UNASSIGNED_GROUP_LABEL
-                    and group_name not in group_names
+                    group_name != UNASSIGNED_GROUP_LABEL and
+                    group_name not in group_names
                 ):
                     group_names.append(group_name)
                 for child_index in range(item.childCount()):
