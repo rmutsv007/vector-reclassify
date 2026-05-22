@@ -32,7 +32,10 @@ class ReclassifyConfig:
 
 def reclassify_vector_layer(config: ReclassifyConfig) -> tuple[QgsVectorLayer, int]:
     layer = QgsProject.instance().mapLayer(config.layer_id)
-    if not isinstance(layer, QgsVectorLayer) or layer.type() != QgsMapLayerType.VectorLayer:
+    if (
+        not isinstance(layer, QgsVectorLayer)
+        or layer.type() != QgsMapLayerType.VectorLayer
+    ):
         raise ValueError("Selected layer is not a valid vector layer.")
 
     if not config.target_field.strip():
@@ -91,7 +94,9 @@ def reclassify_vector_layer(config: ReclassifyConfig) -> tuple[QgsVectorLayer, i
 
     result_layer = QgsVectorLayer(layer_uri, display_name, "ogr")
     if not result_layer.isValid():
-        raise ValueError("Output layer was created but could not be loaded back into QGIS.")
+        raise ValueError(
+            "Output layer was created but could not be loaded back into QGIS."
+        )
 
     QgsProject.instance().addMapLayer(result_layer)
     return result_layer, feature_count
@@ -100,7 +105,9 @@ def reclassify_vector_layer(config: ReclassifyConfig) -> tuple[QgsVectorLayer, i
 def _collect_features(layer: QgsVectorLayer, selected_only: bool):
     if selected_only:
         if layer.selectedFeatureCount() == 0:
-            raise ValueError("Selected features only is enabled, but no features are selected.")
+            raise ValueError(
+                "Selected features only is enabled, but no features are selected."
+            )
         return list(layer.getSelectedFeatures())
     return list(layer.getFeatures())
 
@@ -163,7 +170,9 @@ def _driver_name_from_format(output_format: str) -> str:
         return "GeoJSON"
     if normalized_format == "geopackage":
         return "GPKG"
-    raise ValueError("Unsupported output format. Use GeoPackage, Shapefile, or GeoJSON.")
+    raise ValueError(
+        "Unsupported output format. Use GeoPackage, Shapefile, or GeoJSON."
+    )
 
 
 def _extension_from_format(output_format: str) -> str:
@@ -174,7 +183,9 @@ def _extension_from_format(output_format: str) -> str:
         return ".geojson"
     if normalized_format == "geopackage":
         return ".gpkg"
-    raise ValueError("Unsupported output format. Use GeoPackage, Shapefile, or GeoJSON.")
+    raise ValueError(
+        "Unsupported output format. Use GeoPackage, Shapefile, or GeoJSON."
+    )
 
 
 def _resolve_output_value(source_value, config: ReclassifyConfig):

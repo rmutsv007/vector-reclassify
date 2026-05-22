@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- Added trailing newlines to Python files to resolve Flake8 W292 informational findings
+
+## 0.1.3
+
+- Wrapped Python lines to reduce informational code-quality findings from repository scans
+
 ## 0.1.2
 
 - Added a dedicated top toolbar for the plugin action in QGIS

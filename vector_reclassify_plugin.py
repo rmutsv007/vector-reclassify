@@ -54,7 +54,9 @@ class VectorReclassifyDialog(QDialog):
         self.target_field_edit = QLineEdit("reclass")
         self.output_type_combo = QComboBox()
         self.output_type_combo.addItems(["String", "Integer", "Double"])
-        self.keep_unmatched_checkbox = QCheckBox("Keep original value when no rule matches")
+        self.keep_unmatched_checkbox = QCheckBox(
+            "Keep original value when no rule matches"
+        )
         self.keep_unmatched_checkbox.setChecked(True)
         self.selected_only_checkbox = QCheckBox("Use selected features only")
         self.temporary_output_checkbox = QCheckBox("Save as temporary file")
@@ -72,7 +74,9 @@ class VectorReclassifyDialog(QDialog):
         self.rules_tree.setDragEnabled(True)
         self.rules_tree.setAcceptDrops(True)
         self.rules_tree.setDropIndicatorShown(True)
-        self.rules_tree.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self.rules_tree.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+        )
         self._known_target_values = []
         self._active_rule_mode = "Table"
         self._updating_rule_view = False
@@ -97,7 +101,9 @@ class VectorReclassifyDialog(QDialog):
 
         rules_group = QGroupBox("Reclassify rules")
         rules_layout = QVBoxLayout(rules_group)
-        rules_layout.addWidget(QLabel("Create exact-match mappings from source values to target values."))
+        rules_layout.addWidget(
+            QLabel("Create exact-match mappings from source values to target values.")
+        )
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Editing mode"))
         mode_layout.addWidget(self.rule_mode_combo)
@@ -122,7 +128,9 @@ class VectorReclassifyDialog(QDialog):
         table_page_widget.setLayout(table_page)
 
         drag_drop_page = QVBoxLayout()
-        drag_drop_page.addWidget(QLabel("Create target classes, then drag source values under each class."))
+        drag_drop_page.addWidget(
+            QLabel("Create target classes, then drag source values under each class.")
+        )
         drag_drop_page.addWidget(self.rules_tree)
 
         self.drag_drop_rule_buttons = QHBoxLayout()
@@ -157,7 +165,9 @@ class VectorReclassifyDialog(QDialog):
         output_layout.addWidget(QLabel("Output file"), 2, 0)
         main_layout.addWidget(output_group)
 
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
         main_layout.addWidget(self.button_box)
 
     def _connect_signals(self):
@@ -181,7 +191,10 @@ class VectorReclassifyDialog(QDialog):
         self.layer_combo.clear()
         vector_layers = []
         for layer in QgsProject.instance().mapLayers().values():
-            if isinstance(layer, QgsVectorLayer) and layer.type() == QgsMapLayerType.VectorLayer:
+            if (
+                isinstance(layer, QgsVectorLayer)
+                and layer.type() == QgsMapLayerType.VectorLayer
+            ):
                 vector_layers.append(layer)
 
         for layer in sorted(vector_layers, key=lambda item: item.name().lower()):
@@ -193,7 +206,9 @@ class VectorReclassifyDialog(QDialog):
     def config(self) -> ReclassifyConfig:
         layer_id = self.layer_combo.currentData()
         if not layer_id:
-            raise ValueError("No vector layer is available in the current QGIS project.")
+            raise ValueError(
+                "No vector layer is available in the current QGIS project."
+            )
 
         output_path = self.output_path_edit.text().strip() or None
         if not self.temporary_output_checkbox.isChecked() and not output_path:
@@ -237,7 +252,10 @@ class VectorReclassifyDialog(QDialog):
         self._refresh_target_value_dropdowns()
 
     def _remove_selected_rows(self):
-        selected_rows = sorted({index.row() for index in self.rules_table.selectedIndexes()}, reverse=True)
+        selected_rows = sorted(
+            {index.row() for index in self.rules_table.selectedIndexes()},
+            reverse=True,
+        )
         for row in selected_rows:
             self.rules_table.removeRow(row)
         self._refresh_target_value_dropdowns()
@@ -246,11 +264,18 @@ class VectorReclassifyDialog(QDialog):
         layer = self._current_layer()
         source_field = self.source_field_combo.currentText()
         if layer is None or not source_field:
-            QMessageBox.warning(self, "Missing input", "Choose a vector layer and source field first.")
+            QMessageBox.warning(
+                self,
+                "Missing input",
+                "Choose a vector layer and source field first.",
+            )
             return
 
         field_index = layer.fields().indexOf(source_field)
-        unique_values = sorted(layer.uniqueValues(field_index), key=lambda value: str(value))
+        unique_values = sorted(
+            layer.uniqueValues(field_index),
+            key=lambda value: str(value),
+        )
         rules = [("" if value is None else str(value), "") for value in unique_values]
         self._rebuild_rule_editor(rules)
 
@@ -292,9 +317,13 @@ class VectorReclassifyDialog(QDialog):
             if not source_value and not target_value:
                 continue
             if not source_value or not target_value:
-                raise ValueError(f"Rule row {row} must contain both source and target values.")
+                raise ValueError(
+                    f"Rule row {row} must contain both source and target values."
+                )
             if source_value in rule_map:
-                raise ValueError(f"Rule row {row} duplicates source value '{source_value}'.")
+                raise ValueError(
+                    f"Rule row {row} duplicates source value '{source_value}'."
+                )
             rule_map[source_value] = target_value
         return rule_map
 
@@ -345,7 +374,10 @@ class VectorReclassifyDialog(QDialog):
         item_kind = current_item.data(0, ITEM_KIND_ROLE)
         unassigned_item = self._unassigned_group_item()
         if item_kind == ITEM_KIND_SOURCE:
-            if current_item.parent() is not None and current_item.parent() != unassigned_item:
+            if (
+                current_item.parent() is not None
+                and current_item.parent() != unassigned_item
+            ):
                 current_item.parent().removeChild(current_item)
                 unassigned_item.addChild(current_item)
             return
@@ -359,7 +391,9 @@ class VectorReclassifyDialog(QDialog):
             unassigned_item.addChild(child)
         index = self.rules_tree.indexOfTopLevelItem(current_item)
         self.rules_tree.takeTopLevelItem(index)
-        self._known_target_values = [value for value in self._known_target_values if value != group_name]
+        self._known_target_values = [
+            value for value in self._known_target_values if value != group_name
+        ]
         self._normalize_drag_drop_tree()
 
     def _switch_rule_mode(self, mode_name: str):
@@ -398,7 +432,10 @@ class VectorReclassifyDialog(QDialog):
         self.rules_tree.blockSignals(True)
         self.rules_tree.clear()
 
-        unassigned_item = self._create_group_item(UNASSIGNED_GROUP_LABEL, editable=False)
+        unassigned_item = self._create_group_item(
+            UNASSIGNED_GROUP_LABEL,
+            editable=False,
+        )
         self.rules_tree.addTopLevelItem(unassigned_item)
 
         group_items = {UNASSIGNED_GROUP_LABEL: unassigned_item}
@@ -477,7 +514,10 @@ class VectorReclassifyDialog(QDialog):
                 group_name = item_text or "Class"
                 if current_group and current_group != UNASSIGNED_GROUP_LABEL:
                     group_name = current_group
-                if group_name != UNASSIGNED_GROUP_LABEL and group_name not in group_names:
+                if (
+                    group_name != UNASSIGNED_GROUP_LABEL
+                    and group_name not in group_names
+                ):
                     group_names.append(group_name)
                 for child_index in range(item.childCount()):
                     visit(item.child(child_index), group_name)
@@ -485,7 +525,9 @@ class VectorReclassifyDialog(QDialog):
 
             source_text = item_text
             if source_text:
-                target_value = "" if current_group == UNASSIGNED_GROUP_LABEL else current_group
+                target_value = (
+                    "" if current_group == UNASSIGNED_GROUP_LABEL else current_group
+                )
                 rules.append((source_text, target_value))
             for child_index in range(item.childCount()):
                 visit(item.child(child_index), current_group)
@@ -516,7 +558,9 @@ class VectorReclassifyDialog(QDialog):
         combo_box = QComboBox()
         combo_box.setEditable(True)
         combo_box.setInsertPolicy(QComboBox.NoInsert)
-        combo_box.lineEdit().editingFinished.connect(self._refresh_target_value_dropdowns)
+        combo_box.lineEdit().editingFinished.connect(
+            self._refresh_target_value_dropdowns
+        )
         combo_box.activated.connect(self._refresh_target_value_dropdowns)
         self.rules_table.setCellWidget(row, 1, combo_box)
         self._populate_target_value_dropdown(combo_box, target_value)
@@ -524,14 +568,23 @@ class VectorReclassifyDialog(QDialog):
     def _refresh_target_value_dropdowns(self, *_args):
         if self._updating_rule_view:
             return
-        self._sync_known_target_values([("", self._target_value_text(row)) for row in range(self.rules_table.rowCount())])
+        self._sync_known_target_values(
+            [
+                ("", self._target_value_text(row))
+                for row in range(self.rules_table.rowCount())
+            ]
+        )
         target_values = list(self._known_target_values)
         for row in range(self.rules_table.rowCount()):
             combo_box = self.rules_table.cellWidget(row, 1)
             if combo_box is None:
                 continue
             current_value = combo_box.currentText().strip()
-            self._populate_target_value_dropdown(combo_box, current_value, target_values)
+            self._populate_target_value_dropdown(
+                combo_box,
+                current_value,
+                target_values,
+            )
 
     def _populate_target_value_dropdown(
         self,
