@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title>Vector Reclassify</title>
+  <desc>Icon showing vector polygons being reclassified into grouped classes.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#12343b"/>
+      <stop offset="100%" stop-color="#1f6f78"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="22" fill="url(#bg)"/>
+  <path d="M28 30 54 20 76 30 64 54 36 58Z" fill="#f5b700" stroke="#fff7db" stroke-width="3"/>
+  <path d="M68 30 94 20 104 44 82 60 64 54Z" fill="#ef476f" stroke="#ffdbe4" stroke-width="3"/>
+  <path d="M36 58 64 54 82 60 76 92 42 96 24 74Z" fill="#06d6a0" stroke="#d9fff4" stroke-width="3"/>
+  <path d="M82 60 104 44 102 86 76 92Z" fill="#118ab2" stroke="#d8f4ff" stroke-width="3"/>
+  <circle cx="98" cy="100" r="16" fill="#ffffff"/>
+  <path d="M92 100h12M98 94v12" stroke="#12343b" stroke-width="4" stroke-linecap="round"/>
+</svg>
