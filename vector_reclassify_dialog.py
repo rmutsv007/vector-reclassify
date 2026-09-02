@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+import json
+from pathlib import Path
+
+from qgis.PyQt.QtCore import QSettings, Qt, pyqtSignal
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -15,24 +19,32 @@ from qgis.PyQt.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
 )
 from qgis.core import QgsMapLayerType, QgsProject, QgsVectorLayer
 
-from .reclassifier import ReclassifyConfig
+from .reclassifier import ReclassifyConfig, preview_rule_coverage
 
-
+SETTINGS_GROUP = "VectorReclassify"
 ITEM_KIND_ROLE = Qt.UserRole
 ITEM_KIND_GROUP = "group"
 ITEM_KIND_SOURCE = "source"
 UNASSIGNED_GROUP_LABEL = "Unassigned"
+OUTPUT_FORMATS = ["GeoPackage", "Shapefile", "GeoJSON"]
+FORMAT_EXTENSIONS = {"GeoPackage": ".gpkg", "Shapefile": ".shp", "GeoJSON": ".geojson"}
+MISSING_TARGET_COLOR = QColor(255, 214, 214)
+MAX_RECENT_PRESETS = 5
 
 
 class RuleTreeWidget(QTreeWidget):
@@ -47,9 +59,13 @@ class VectorReclassifyDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Vector Reclassify")
-        self.resize(760, 520)
+        self.resize(820, 620)
+        self._settings = QSettings()
 
-        self.layer_combo = QComboBox()
+        self.layer_list = QListWidget()
+        self.layer_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.select_all_layers_button = QPushButton("Select all")
+        self.clear_layers_button = QPushButton("Clear selection")
         self.source_field_combo = QComboBox()
         self.target_field_edit = QLineEdit("reclass")
         self.output_type_combo = QComboBox()
@@ -61,15 +77,24 @@ class VectorReclassifyDialog(QDialog):
         self.selected_only_checkbox = QCheckBox("Use selected features only")
         self.temporary_output_checkbox = QCheckBox("Save as temporary file")
         self.temporary_output_checkbox.setChecked(True)
+        self.output_format_combo = QComboBox()
+        self.output_format_combo.addItems(OUTPUT_FORMATS)
         self.output_path_edit = QLineEdit()
+        self.output_path_label = QLabel("Output file")
+
+        self.rule_filter_edit = QLineEdit()
+        self.rule_filter_edit.setPlaceholderText("Filter rules by value...")
         self.rule_mode_combo = QComboBox()
         self.rule_mode_combo.addItems(["Table", "Drag and drop"])
         self.rule_mode_stack = QStackedWidget()
         self.rules_table = QTableWidget(0, 2)
         self.rules_table.setHorizontalHeaderLabels(["From value", "To value"])
         self.rules_table.horizontalHeader().setStretchLastSection(True)
+        self.rules_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.rules_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.rules_tree = RuleTreeWidget()
         self.rules_tree.setHeaderLabel("Drag source values into target classes")
+        self.rules_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.rules_tree.setDragDropMode(QAbstractItemView.InternalMove)
         self.rules_tree.setDragEnabled(True)
         self.rules_tree.setAcceptDrops(True)
@@ -85,13 +110,24 @@ class VectorReclassifyDialog(QDialog):
         self._connect_signals()
         self._rebuild_rule_editor([])
         self.refresh_layers()
+        self._restore_settings()
 
+    # ------------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------------
     def _build_layout(self):
         main_layout = QVBoxLayout(self)
 
         form_group = QGroupBox("Inputs")
         form_layout = QFormLayout(form_group)
-        form_layout.addRow("Vector layer", self.layer_combo)
+        layer_list_layout = QVBoxLayout()
+        layer_list_layout.addWidget(self.layer_list)
+        layer_buttons_layout = QHBoxLayout()
+        layer_buttons_layout.addWidget(self.select_all_layers_button)
+        layer_buttons_layout.addWidget(self.clear_layers_button)
+        layer_buttons_layout.addStretch(1)
+        layer_list_layout.addLayout(layer_buttons_layout)
+        form_layout.addRow("Vector layers", layer_list_layout)
         form_layout.addRow("Source field", self.source_field_combo)
         form_layout.addRow("New field name", self.target_field_edit)
         form_layout.addRow("Output field type", self.output_type_combo)
@@ -107,6 +143,9 @@ class VectorReclassifyDialog(QDialog):
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Editing mode"))
         mode_layout.addWidget(self.rule_mode_combo)
+        mode_layout.addSpacing(12)
+        mode_layout.addWidget(QLabel("Filter"))
+        mode_layout.addWidget(self.rule_filter_edit)
         mode_layout.addStretch(1)
         rules_layout.addLayout(mode_layout)
 
@@ -116,9 +155,11 @@ class VectorReclassifyDialog(QDialog):
         self.table_rule_buttons = QHBoxLayout()
         self.add_rule_button = QPushButton("Add rule")
         self.remove_rule_button = QPushButton("Remove selected")
+        self.bulk_assign_button = QPushButton("Bulk assign target...")
         self.load_unique_button = QPushButton("Load unique values")
         self.table_rule_buttons.addWidget(self.add_rule_button)
         self.table_rule_buttons.addWidget(self.remove_rule_button)
+        self.table_rule_buttons.addWidget(self.bulk_assign_button)
         self.table_rule_buttons.addWidget(self.load_unique_button)
         self.table_rule_buttons.addStretch(1)
         table_page.addLayout(self.table_rule_buttons)
@@ -136,9 +177,11 @@ class VectorReclassifyDialog(QDialog):
         self.drag_drop_rule_buttons = QHBoxLayout()
         self.add_class_button = QPushButton("Add class")
         self.remove_drag_item_button = QPushButton("Remove selected")
+        self.bulk_assign_class_button = QPushButton("Assign selected to class...")
         self.drag_drop_load_unique_button = QPushButton("Load unique values")
         self.drag_drop_rule_buttons.addWidget(self.add_class_button)
         self.drag_drop_rule_buttons.addWidget(self.remove_drag_item_button)
+        self.drag_drop_rule_buttons.addWidget(self.bulk_assign_class_button)
         self.drag_drop_rule_buttons.addWidget(self.drag_drop_load_unique_button)
         self.drag_drop_rule_buttons.addStretch(1)
         drag_drop_page.addLayout(self.drag_drop_rule_buttons)
@@ -150,19 +193,34 @@ class VectorReclassifyDialog(QDialog):
         self.rule_mode_stack.addWidget(table_page_widget)
         self.rule_mode_stack.addWidget(drag_drop_page_widget)
         rules_layout.addWidget(self.rule_mode_stack)
+
+        preset_layout = QHBoxLayout()
+        self.save_preset_button = QPushButton("Save preset...")
+        self.load_preset_button = QPushButton("Load preset...")
+        self.recent_presets_button = QToolButton()
+        self.recent_presets_button.setText("Recent presets")
+        self.recent_presets_button.setPopupMode(QToolButton.InstantPopup)
+        self.recent_presets_menu = QMenu(self.recent_presets_button)
+        self.recent_presets_button.setMenu(self.recent_presets_menu)
+        self.preview_button = QPushButton("Preview coverage...")
+        preset_layout.addWidget(self.save_preset_button)
+        preset_layout.addWidget(self.load_preset_button)
+        preset_layout.addWidget(self.recent_presets_button)
+        preset_layout.addStretch(1)
+        preset_layout.addWidget(self.preview_button)
+        rules_layout.addLayout(preset_layout)
+
         main_layout.addWidget(rules_group)
 
         output_group = QGroupBox("Output")
         output_layout = QGridLayout(output_group)
         output_layout.addWidget(self.temporary_output_checkbox, 0, 0, 1, 3)
-        self.output_format_label = QLabel("Temporary file type")
-        output_layout.addWidget(self.output_format_label, 1, 0)
-        self.output_format_value_label = QLabel("Shapefile (.shp)")
-        output_layout.addWidget(self.output_format_value_label, 1, 1, 1, 2)
+        output_layout.addWidget(QLabel("Output format"), 1, 0)
+        output_layout.addWidget(self.output_format_combo, 1, 1, 1, 2)
+        output_layout.addWidget(self.output_path_label, 2, 0)
         output_layout.addWidget(self.output_path_edit, 2, 1)
         self.browse_button = QPushButton("Browse")
         output_layout.addWidget(self.browse_button, 2, 2)
-        output_layout.addWidget(QLabel("Output file"), 2, 0)
         main_layout.addWidget(output_group)
 
         self.button_box = QDialogButtonBox(
@@ -171,24 +229,40 @@ class VectorReclassifyDialog(QDialog):
         main_layout.addWidget(self.button_box)
 
     def _connect_signals(self):
-        self.layer_combo.currentIndexChanged.connect(self._populate_fields)
+        self.layer_list.itemChanged.connect(self._handle_layer_selection_changed)
+        self.select_all_layers_button.clicked.connect(self._select_all_layers)
+        self.clear_layers_button.clicked.connect(self._clear_layer_selection)
         self.rule_mode_combo.currentTextChanged.connect(self._switch_rule_mode)
+        self.rule_filter_edit.textChanged.connect(self._apply_rule_filter)
         self.add_rule_button.clicked.connect(self._add_rule_row)
         self.remove_rule_button.clicked.connect(self._remove_selected_rows)
+        self.bulk_assign_button.clicked.connect(self._bulk_assign_target_value)
         self.load_unique_button.clicked.connect(self._load_unique_values)
         self.add_class_button.clicked.connect(self._add_target_class)
         self.remove_drag_item_button.clicked.connect(self._remove_drag_drop_selection)
+        self.bulk_assign_class_button.clicked.connect(self._bulk_assign_to_class)
         self.drag_drop_load_unique_button.clicked.connect(self._load_unique_values)
+        self.save_preset_button.clicked.connect(self._save_preset)
+        self.load_preset_button.clicked.connect(self._load_preset)
+        self.preview_button.clicked.connect(self._preview_coverage)
         self.browse_button.clicked.connect(self._browse_output_path)
         self.temporary_output_checkbox.toggled.connect(self._sync_output_mode)
+        self.output_format_combo.currentTextChanged.connect(self._sync_output_mode)
         self.rules_table.itemChanged.connect(self._refresh_target_value_dropdowns)
+        self.rules_table.itemSelectionChanged.connect(self._sync_bulk_button_state)
         self.rules_tree.itemChanged.connect(self._handle_drag_drop_item_changed)
         self.rules_tree.rulesDropped.connect(self._normalize_drag_drop_tree)
+        self.rules_tree.itemSelectionChanged.connect(self._sync_bulk_button_state)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
 
+    # ------------------------------------------------------------------
+    # Layers (multi-select)
+    # ------------------------------------------------------------------
     def refresh_layers(self):
-        self.layer_combo.clear()
+        previously_checked = set(self._selected_layer_ids())
+        self.layer_list.blockSignals(True)
+        self.layer_list.clear()
         vector_layers = []
         for layer in QgsProject.instance().mapLayers().values():
             if (
@@ -198,25 +272,86 @@ class VectorReclassifyDialog(QDialog):
                 vector_layers.append(layer)
 
         for layer in sorted(vector_layers, key=lambda item: item.name().lower()):
-            self.layer_combo.addItem(layer.name(), layer.id())
+            item = QListWidgetItem(layer.name())
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setData(Qt.UserRole, layer.id())
+            if layer.id() in previously_checked:
+                item.setCheckState(Qt.Checked)
+            elif not previously_checked and len(vector_layers) == 1:
+                # Convenience: auto-check the only layer on first open.
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+            self.layer_list.addItem(item)
+        self.layer_list.blockSignals(False)
 
         self._populate_fields()
         self._sync_output_mode()
 
-    def config(self) -> ReclassifyConfig:
-        layer_id = self.layer_combo.currentData()
-        if not layer_id:
-            raise ValueError(
-                "No vector layer is available in the current QGIS project."
-            )
+    def _select_all_layers(self):
+        for index in range(self.layer_list.count()):
+            self.layer_list.item(index).setCheckState(Qt.Checked)
 
+    def _clear_layer_selection(self):
+        for index in range(self.layer_list.count()):
+            self.layer_list.item(index).setCheckState(Qt.Unchecked)
+
+    def _handle_layer_selection_changed(self, _item):
+        self._populate_fields()
+        self._sync_output_mode()
+
+    def _selected_layer_ids(self) -> list[str]:
+        layer_ids = []
+        for index in range(self.layer_list.count()):
+            item = self.layer_list.item(index)
+            if item.checkState() == Qt.Checked:
+                layer_ids.append(item.data(Qt.UserRole))
+        return layer_ids
+
+    def _selected_layers(self) -> list[QgsVectorLayer]:
+        layers = []
+        for layer_id in self._selected_layer_ids():
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if isinstance(layer, QgsVectorLayer):
+                layers.append(layer)
+        return layers
+
+    def _first_selected_layer(self) -> QgsVectorLayer | None:
+        layers = self._selected_layers()
+        return layers[0] if layers else None
+
+    def _populate_fields(self):
+        current_field = self.source_field_combo.currentText()
+        self.source_field_combo.clear()
+        layer = self._first_selected_layer()
+        if layer is None:
+            return
+        for field in layer.fields():
+            self.source_field_combo.addItem(field.name())
+        if current_field:
+            index = self.source_field_combo.findText(current_field)
+            if index != -1:
+                self.source_field_combo.setCurrentIndex(index)
+
+    # ------------------------------------------------------------------
+    # Config / validation
+    # ------------------------------------------------------------------
+    def config(self) -> ReclassifyConfig:
+        layer_ids = tuple(self._selected_layer_ids())
+        if not layer_ids:
+            raise ValueError("Select at least one vector layer.")
+
+        is_batch = len(layer_ids) > 1
         output_path = self.output_path_edit.text().strip() or None
         if not self.temporary_output_checkbox.isChecked() and not output_path:
-            raise ValueError("Output path is required.")
+            raise ValueError(
+                "Output folder is required." if is_batch else "Output path is required."
+            )
 
         rules = self._read_rules()
+        self._store_settings()
         return ReclassifyConfig(
-            layer_id=layer_id,
+            layer_ids=layer_ids,
             source_field=self.source_field_combo.currentText(),
             target_field=self.target_field_edit.text().strip(),
             rules=rules,
@@ -224,7 +359,7 @@ class VectorReclassifyDialog(QDialog):
             selected_only=self.selected_only_checkbox.isChecked(),
             output_path=output_path,
             output_type=self.output_type_combo.currentText(),
-            output_format=self._selected_output_format(output_path),
+            output_format=self.output_format_combo.currentText(),
             temporary_output=self.temporary_output_checkbox.isChecked(),
         )
 
@@ -236,14 +371,9 @@ class VectorReclassifyDialog(QDialog):
             return
         super().accept()
 
-    def _populate_fields(self):
-        self.source_field_combo.clear()
-        layer = self._current_layer()
-        if layer is None:
-            return
-        for field in layer.fields():
-            self.source_field_combo.addItem(field.name())
-
+    # ------------------------------------------------------------------
+    # Rule rows (shared by table + drag/drop)
+    # ------------------------------------------------------------------
     def _add_rule_row(self, source_value: str = "", target_value: str = ""):
         row = self.rules_table.rowCount()
         self.rules_table.insertRow(row)
@@ -260,14 +390,92 @@ class VectorReclassifyDialog(QDialog):
             self.rules_table.removeRow(row)
         self._refresh_target_value_dropdowns()
 
+    def _bulk_assign_target_value(self):
+        selected_rows = sorted(
+            {index.row() for index in self.rules_table.selectedIndexes()}
+        )
+        if len(selected_rows) < 1:
+            QMessageBox.information(
+                self, "Bulk assign", "Select one or more rows first."
+            )
+            return
+
+        value, accepted = QInputDialog.getText(
+            self,
+            "Bulk assign target value",
+            f"Target value for {len(selected_rows)} selected row(s):",
+        )
+        if not accepted:
+            return
+        value = value.strip()
+        for row in selected_rows:
+            combo_box = self.rules_table.cellWidget(row, 1)
+            if combo_box is not None:
+                combo_box.setCurrentText(value)
+        self._refresh_target_value_dropdowns()
+
+    def _sync_bulk_button_state(self):
+        table_rows = {index.row() for index in self.rules_table.selectedIndexes()}
+        self.bulk_assign_button.setEnabled(len(table_rows) >= 1)
+        tree_sources = [
+            item for item in self.rules_tree.selectedItems()
+            if item.data(0, ITEM_KIND_ROLE) == ITEM_KIND_SOURCE
+        ]
+        self.bulk_assign_class_button.setEnabled(len(tree_sources) >= 1)
+
+    def _bulk_assign_to_class(self):
+        source_items = [
+            item for item in self.rules_tree.selectedItems()
+            if item.data(0, ITEM_KIND_ROLE) == ITEM_KIND_SOURCE
+        ]
+        if not source_items:
+            QMessageBox.information(
+                self, "Assign to class", "Select one or more source values first."
+            )
+            return
+
+        choices = [UNASSIGNED_GROUP_LABEL] + list(self._known_target_values) + [
+            "New class..."
+        ]
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Assign to class",
+            f"Move {len(source_items)} selected value(s) to:",
+            choices,
+            editable=False,
+        )
+        if not accepted:
+            return
+
+        if choice == "New class...":
+            new_name, name_accepted = QInputDialog.getText(
+                self, "Add class", "Class name"
+            )
+            choice = new_name.strip() if name_accepted else ""
+            if not choice:
+                return
+            if choice not in self._known_target_values:
+                self._known_target_values.append(choice)
+
+        rules = self._capture_drag_drop_rows()
+        source_texts = {item.text(0).strip() for item in source_items}
+        updated_rules = []
+        target_value = "" if choice == UNASSIGNED_GROUP_LABEL else choice
+        for source_value, existing_target in rules:
+            if source_value in source_texts:
+                updated_rules.append((source_value, target_value))
+            else:
+                updated_rules.append((source_value, existing_target))
+        self._rebuild_rule_editor(updated_rules)
+
     def _load_unique_values(self):
-        layer = self._current_layer()
+        layer = self._first_selected_layer()
         source_field = self.source_field_combo.currentText()
         if layer is None or not source_field:
             QMessageBox.warning(
                 self,
                 "Missing input",
-                "Choose a vector layer and source field first.",
+                "Choose at least one vector layer and a source field first.",
             )
             return
 
@@ -279,31 +487,215 @@ class VectorReclassifyDialog(QDialog):
         rules = [("" if value is None else str(value), "") for value in unique_values]
         self._rebuild_rule_editor(rules)
 
-    def _browse_output_path(self):
-        if self.temporary_output_checkbox.isChecked():
+    # ------------------------------------------------------------------
+    # Filter / highlight
+    # ------------------------------------------------------------------
+    def _apply_rule_filter(self, text: str):
+        needle = text.strip().lower()
+        if self._active_rule_mode == "Table":
+            for row in range(self.rules_table.rowCount()):
+                source_item = self.rules_table.item(row, 0)
+                source_text = source_item.text().lower() if source_item else ""
+                target_text = self._target_value_text(row).lower()
+                matches = (
+                    not needle or needle in source_text or needle in target_text
+                )
+                self.rules_table.setRowHidden(row, not matches)
+        else:
+            for index in range(self.rules_tree.topLevelItemCount()):
+                group_item = self.rules_tree.topLevelItem(index)
+                group_visible = False
+                for child_index in range(group_item.childCount()):
+                    child = group_item.child(child_index)
+                    matches = not needle or needle in child.text(0).lower()
+                    child.setHidden(not matches)
+                    group_visible = group_visible or matches
+                group_item.setHidden(not group_visible and bool(needle))
+
+    def _highlight_missing_targets(self):
+        if self._active_rule_mode != "Table":
+            return
+        for row in range(self.rules_table.rowCount()):
+            source_item = self.rules_table.item(row, 0)
+            source_text = source_item.text().strip() if source_item else ""
+            target_text = self._target_value_text(row)
+            color = (
+                MISSING_TARGET_COLOR
+                if source_text and not target_text
+                else Qt.transparent
+            )
+            if source_item is not None:
+                source_item.setBackground(color)
+
+    # ------------------------------------------------------------------
+    # Presets
+    # ------------------------------------------------------------------
+    def _save_preset(self):
+        try:
+            rules = self._read_rules()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid input", str(exc))
+            return
+        if not rules:
+            QMessageBox.information(self, "Save preset", "There are no rules to save.")
             return
 
+        start_dir = self._settings.value(f"{SETTINGS_GROUP}/last_preset_dir", "")
         path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save reclassified layer",
-            self.output_path_edit.text().strip(),
-            "GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson)",
+            self, "Save rule preset", start_dir, "JSON preset (*.json)"
         )
-        if path:
-            self.output_path_edit.setText(path)
-
-    def _sync_output_mode(self):
-        temporary_output = self.temporary_output_checkbox.isChecked()
-        self.output_format_label.setVisible(temporary_output)
-        self.output_format_value_label.setVisible(temporary_output)
-        self.output_path_edit.setEnabled(not temporary_output)
-        self.browse_button.setEnabled(not temporary_output)
-        if temporary_output:
-            self.output_path_edit.setText("Temporary file (.shp)")
+        if not path:
             return
-        if self.output_path_edit.text().startswith("Temporary file ("):
-            self.output_path_edit.clear()
+        if not path.lower().endswith(".json"):
+            path += ".json"
 
+        payload = {"rules": [{"from": key, "to": value} for key, value in rules.items()]}
+        try:
+            Path(path).write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Save preset", f"Could not save preset: {exc}")
+            return
+
+        self._settings.setValue(f"{SETTINGS_GROUP}/last_preset_dir", str(Path(path).parent))
+        self._remember_recent_preset(path)
+        QMessageBox.information(self, "Save preset", "Preset saved.")
+
+    def _load_preset(self, checked=False, path: str | None = None):
+        if not path:
+            start_dir = self._settings.value(f"{SETTINGS_GROUP}/last_preset_dir", "")
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Load rule preset", start_dir, "JSON preset (*.json)"
+            )
+        if not path:
+            return
+
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            entries = payload.get("rules", [])
+            rules = [
+                (str(entry.get("from", "")), str(entry.get("to", "")))
+                for entry in entries
+            ]
+        except (OSError, ValueError, AttributeError) as exc:
+            QMessageBox.critical(self, "Load preset", f"Could not load preset: {exc}")
+            return
+
+        self._rebuild_rule_editor(rules)
+        self._settings.setValue(f"{SETTINGS_GROUP}/last_preset_dir", str(Path(path).parent))
+        self._remember_recent_preset(path)
+
+    def _remember_recent_preset(self, path: str):
+        recent = self._settings.value(f"{SETTINGS_GROUP}/recent_presets", [])
+        if not isinstance(recent, list):
+            recent = [recent] if recent else []
+        recent = [entry for entry in recent if entry != path]
+        recent.insert(0, path)
+        recent = recent[:MAX_RECENT_PRESETS]
+        self._settings.setValue(f"{SETTINGS_GROUP}/recent_presets", recent)
+        self._rebuild_recent_presets_menu(recent)
+
+    def _rebuild_recent_presets_menu(self, recent: list[str]):
+        self.recent_presets_menu.clear()
+        if not recent:
+            action = self.recent_presets_menu.addAction("(none)")
+            action.setEnabled(False)
+            return
+        for path in recent:
+            action = self.recent_presets_menu.addAction(path)
+            action.triggered.connect(
+                lambda _checked=False, preset_path=path: self._load_preset(
+                    path=preset_path
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # Preview
+    # ------------------------------------------------------------------
+    def _preview_coverage(self):
+        layers = self._selected_layers()
+        if not layers:
+            QMessageBox.information(self, "Preview", "Select at least one layer.")
+            return
+        source_field = self.source_field_combo.currentText()
+        if not source_field:
+            QMessageBox.information(self, "Preview", "Choose a source field.")
+            return
+
+        try:
+            rules = self._read_rules()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid input", str(exc))
+            return
+
+        selected_only = self.selected_only_checkbox.isChecked()
+        lines = []
+        for layer in layers:
+            coverage = preview_rule_coverage(layer, source_field, rules, selected_only)
+            if coverage.error_message:
+                lines.append(f"{coverage.layer_name}: {coverage.error_message}")
+            else:
+                lines.append(
+                    f"{coverage.layer_name}: {coverage.total} features, "
+                    f"{coverage.matched} matched, {coverage.unmatched} unmatched"
+                )
+        QMessageBox.information(self, "Rule coverage preview", "\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # Settings persistence
+    # ------------------------------------------------------------------
+    def _restore_settings(self):
+        settings = self._settings
+        output_type = settings.value(f"{SETTINGS_GROUP}/output_type")
+        if output_type:
+            index = self.output_type_combo.findText(output_type)
+            if index != -1:
+                self.output_type_combo.setCurrentIndex(index)
+        output_format = settings.value(f"{SETTINGS_GROUP}/output_format")
+        if output_format:
+            index = self.output_format_combo.findText(output_format)
+            if index != -1:
+                self.output_format_combo.setCurrentIndex(index)
+        keep_unmatched = settings.value(f"{SETTINGS_GROUP}/keep_unmatched")
+        if keep_unmatched is not None:
+            self.keep_unmatched_checkbox.setChecked(_to_bool(keep_unmatched))
+        selected_only = settings.value(f"{SETTINGS_GROUP}/selected_only")
+        if selected_only is not None:
+            self.selected_only_checkbox.setChecked(_to_bool(selected_only))
+        temporary_output = settings.value(f"{SETTINGS_GROUP}/temporary_output")
+        if temporary_output is not None:
+            self.temporary_output_checkbox.setChecked(_to_bool(temporary_output))
+
+        recent = settings.value(f"{SETTINGS_GROUP}/recent_presets", [])
+        if not isinstance(recent, list):
+            recent = [recent] if recent else []
+        self._rebuild_recent_presets_menu(recent)
+        self._sync_output_mode()
+
+    def _store_settings(self):
+        settings = self._settings
+        settings.setValue(
+            f"{SETTINGS_GROUP}/output_type", self.output_type_combo.currentText()
+        )
+        settings.setValue(
+            f"{SETTINGS_GROUP}/output_format", self.output_format_combo.currentText()
+        )
+        settings.setValue(
+            f"{SETTINGS_GROUP}/keep_unmatched",
+            self.keep_unmatched_checkbox.isChecked(),
+        )
+        settings.setValue(
+            f"{SETTINGS_GROUP}/selected_only", self.selected_only_checkbox.isChecked()
+        )
+        settings.setValue(
+            f"{SETTINGS_GROUP}/temporary_output",
+            self.temporary_output_checkbox.isChecked(),
+        )
+
+    # ------------------------------------------------------------------
+    # Rule capture / validation
+    # ------------------------------------------------------------------
     def _read_rules(self) -> dict[str, str]:
         rules = self._capture_rule_rows()
         self._sync_known_target_values(rules)
@@ -416,6 +808,9 @@ class VectorReclassifyDialog(QDialog):
                 self._populate_table_rules(rules)
         finally:
             self._updating_rule_view = False
+        self._apply_rule_filter(self.rule_filter_edit.text())
+        self._highlight_missing_targets()
+        self._sync_bulk_button_state()
 
     def _populate_table_rules(self, rules: list[tuple[str, str]]):
         self.rules_table.blockSignals(True)
@@ -585,6 +980,7 @@ class VectorReclassifyDialog(QDialog):
                 current_value,
                 target_values,
             )
+        self._highlight_missing_targets()
 
     def _populate_target_value_dropdown(
         self,
@@ -610,24 +1006,51 @@ class VectorReclassifyDialog(QDialog):
             return ""
         return combo_box.currentText().strip()
 
-    def _current_layer(self) -> QgsVectorLayer | None:
-        layer_id = self.layer_combo.currentData()
-        if not layer_id:
-            return None
-        layer = QgsProject.instance().mapLayer(layer_id)
-        return layer if isinstance(layer, QgsVectorLayer) else None
-
-    def _selected_output_format(self, output_path: str | None) -> str:
+    # ------------------------------------------------------------------
+    # Output path handling
+    # ------------------------------------------------------------------
+    def _browse_output_path(self):
         if self.temporary_output_checkbox.isChecked():
-            return "Shapefile"
-        if not output_path:
-            raise ValueError("Output path is required.")
+            return
 
-        suffix = output_path.lower()
-        if suffix.endswith(".gpkg"):
-            return "GeoPackage"
-        if suffix.endswith(".shp"):
-            return "Shapefile"
-        if suffix.endswith(".geojson") or suffix.endswith(".json"):
-            return "GeoJSON"
-        raise ValueError("Output file must end with .gpkg, .shp, or .geojson.")
+        is_batch = len(self._selected_layer_ids()) > 1
+        if is_batch:
+            path = QFileDialog.getExistingDirectory(
+                self, "Select output folder", self.output_path_edit.text().strip()
+            )
+            if path:
+                self.output_path_edit.setText(path)
+            return
+
+        extension = FORMAT_EXTENSIONS.get(self.output_format_combo.currentText(), "")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save reclassified layer",
+            self.output_path_edit.text().strip(),
+            "GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson)",
+        )
+        if path:
+            if extension and not path.lower().endswith(extension):
+                path = str(Path(path).with_suffix(extension))
+            self.output_path_edit.setText(path)
+
+    def _sync_output_mode(self):
+        temporary_output = self.temporary_output_checkbox.isChecked()
+        is_batch = len(self._selected_layer_ids()) > 1
+        self.output_path_edit.setEnabled(not temporary_output)
+        self.browse_button.setEnabled(not temporary_output)
+        self.output_path_label.setText("Output folder" if is_batch else "Output file")
+
+        if temporary_output:
+            self.output_path_edit.setText(
+                "Temporary files (one per layer)" if is_batch else "Temporary file"
+            )
+            return
+        if self.output_path_edit.text().startswith("Temporary file"):
+            self.output_path_edit.clear()
+
+
+def _to_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes"}

@@ -1,4 +1,4 @@
 def classFactory(iface):
-    from .join_2field_plugin import JoinTwoFieldPlugin
+    from .vector_reclassify_plugin import VectorReclassifyPlugin
 
-    return JoinTwoFieldPlugin(iface)
+    return VectorReclassifyPlugin(iface)

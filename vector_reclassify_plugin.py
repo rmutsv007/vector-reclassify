@@ -4,13 +4,13 @@ from pathlib import Path
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.core import Qgis
+from qgis.core import Qgis, QgsProject
 
-from .joiner import join_layers_by_two_fields
-from .join_2field_dialog import JoinTwoFieldDialog
+from .reclassifier import reclassify_vector_layers
+from .vector_reclassify_dialog import VectorReclassifyDialog
 
 
-class JoinTwoFieldPlugin:
+class VectorReclassifyPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.action = None
@@ -21,23 +21,23 @@ class JoinTwoFieldPlugin:
         icon_path = self.plugin_dir / "icon.png"
         self.action = QAction(
             QIcon(str(icon_path)),
-            "Join Field 2 Field",
+            "Vector Reclassify",
             self.iface.mainWindow(),
         )
-        self.action.setObjectName("joinTwoFieldAction")
+        self.action.setObjectName("vectorReclassifyAction")
         self.action.setStatusTip(
-            "Join attributes between two layers matching on two fields at once"
+            "Reclassify vector attribute values into a new field across one or more layers"
         )
         self.action.triggered.connect(self.run)
-        self.toolbar = self.iface.addToolBar("Join Field 2 Field")
-        self.toolbar.setObjectName("JoinTwoFieldToolbar")
+        self.toolbar = self.iface.addToolBar("Vector Reclassify")
+        self.toolbar.setObjectName("VectorReclassifyToolbar")
         self.toolbar.addAction(self.action)
-        self.iface.addPluginToVectorMenu("&Join Field 2 Field", self.action)
+        self.iface.addPluginToVectorMenu("&Vector Reclassify", self.action)
 
     def unload(self):
         if self.action is None:
             return
-        self.iface.removePluginVectorMenu("&Join Field 2 Field", self.action)
+        self.iface.removePluginVectorMenu("&Vector Reclassify", self.action)
         if self.toolbar is not None:
             self.toolbar.removeAction(self.action)
             self.toolbar.deleteLater()
@@ -45,26 +45,50 @@ class JoinTwoFieldPlugin:
         self.action = None
 
     def run(self):
-        dialog = JoinTwoFieldDialog(self.iface.mainWindow())
+        dialog = VectorReclassifyDialog(self.iface.mainWindow())
         if not dialog.exec_():
             return
 
         try:
             config = dialog.config()
-            result_layer, feature_count, matched_count = join_layers_by_two_fields(config)
         except ValueError as exc:
-            QMessageBox.critical(self.iface.mainWindow(), "Join Field 2 Field", str(exc))
-            return
-        except Exception as exc:  # pragma: no cover - QGIS runtime path
-            QMessageBox.critical(self.iface.mainWindow(), "Join Field 2 Field", str(exc))
+            QMessageBox.critical(self.iface.mainWindow(), "Vector Reclassify", str(exc))
             return
 
-        self.iface.messageBar().pushMessage(
-            "Join Field 2 Field",
-            (
-                f"Created layer '{result_layer.name()}' with {feature_count} features "
-                f"({matched_count} matched)."
-            ),
-            level=Qgis.Success,
-            duration=5,
-        )
+        try:
+            results = reclassify_vector_layers(config)
+        except ValueError as exc:
+            QMessageBox.critical(self.iface.mainWindow(), "Vector Reclassify", str(exc))
+            return
+        except Exception as exc:  # pragma: no cover - QGIS runtime path
+            QMessageBox.critical(self.iface.mainWindow(), "Vector Reclassify", str(exc))
+            return
+
+        succeeded = [result for result in results if result.success]
+        failed = [result for result in results if not result.success]
+
+        for result in succeeded:
+            QgsProject.instance().addMapLayer(result.result_layer)
+
+        if succeeded:
+            summary = "; ".join(
+                f"{result.layer_name}: {result.feature_count} features "
+                f"({result.matched_count} matched)"
+                for result in succeeded
+            )
+            self.iface.messageBar().pushMessage(
+                "Vector Reclassify",
+                f"Completed {len(succeeded)} layer(s). {summary}",
+                level=Qgis.Success,
+                duration=6,
+            )
+
+        if failed:
+            details = "\n".join(
+                f"- {result.layer_name}: {result.error_message}" for result in failed
+            )
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                "Vector Reclassify",
+                f"{len(failed)} of {len(results)} layer(s) failed:\n{details}",
+            )

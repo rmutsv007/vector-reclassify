@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+- Fixed the plugin entry point, which previously referenced code from an unrelated
+  plugin and never loaded the actual Vector Reclassify dialog
+- Added multi-layer batch reclassify: pick several layers with checkboxes and run
+  the same rule set against all of them; each layer succeeds or fails independently
+  and a summary is shown when done
+- Added bulk rule editing: assign a target value to multiple selected table rows,
+  or move multiple selected values into a class at once in drag-and-drop mode
+- Added rule filtering (search box) and highlighting of rows missing a target value
+- Added save/load rule presets as JSON, plus a recent-presets menu
+- Added a "Preview coverage" action showing matched/unmatched feature counts per
+  layer before running
+- Dialog now remembers output type/format and checkbox settings between uses
+- Output format is now an explicit choice (GeoPackage/Shapefile/GeoJSON) instead of
+  being inferred from a typed file extension; batch mode writes to a chosen folder
+  with one file per layer
+
 ## 0.1.5
 
 - Adjusted multiline boolean conditions to resolve Flake8 W503 informational findings
